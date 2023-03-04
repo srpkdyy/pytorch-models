@@ -76,11 +76,14 @@ def main():
         dl, G, D, G_optimizer, D_optimizer
     )
 
-    real_label = torch.zeros(cfg.batch_size, device=device)
-    fake_label = torch.ones(cfg.batch_size, device=device)
+    fake_label = torch.zeros(cfg.batch_size, device=device)
+    real_label = torch.ones(cfg.batch_size, device=device)
 
     for epoch in range(cfg.epoch):
-        for i, (imgs, label) in enumerate(dl):
+        G.train()
+        D.train()
+
+        for imgs, label in dl:
             # Update Discriminator with Real
             D_real_outputs = D(imgs)
 
@@ -89,7 +92,7 @@ def main():
             ar.backward(D_real_loss)
 
             # Update Discriminator with Fake
-            noise = torch.rand(cfg.batch_size, cfg.z_dim, device=device)
+            noise = 2 * torch.rand(cfg.batch_size, cfg.z_dim, device=device) - 1
             D_fake_outputs = D(G(noise).detach())
 
             D_fake_loss = criterion(D_fake_outputs, fake_label)
@@ -97,7 +100,7 @@ def main():
             D_optimizer.step()
 
             # Update Generator
-            noise = torch.rand(cfg.batch_size, cfg.z_dim, device=device)
+            noise = 2 * torch.rand(cfg.batch_size, cfg.z_dim, device=device) - 1
             samples = G(noise)
             outputs = D(samples)
 
@@ -115,7 +118,8 @@ def main():
             ar.print(log)
 
     ar.end_training()
-    save_image(G_outputs[:64], f'{cfg.logdir}/epoch{epoch}.png', nrow=8, value_range=(-1, 1))
+    save_image(samples[:64], f'{cfg.logdir}/epoch{epoch}.png', nrow=8,
+               value_range=(-1, 1), normalize=True)
 
 
 if __name__ == '__main__':
