@@ -45,7 +45,9 @@ def main():
 
     ar = Accelerator(log_with='wandb')
     ar.init_trackers('DCGAN', config=cfg)
+
     device = ar.device
+    cfg.lr *= ar.num_processes
 
     ds = ImageFolder(
         cfg.root,
