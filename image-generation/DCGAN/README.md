@@ -1,6 +1,6 @@
-# DCGAN - Unofficial Implementation
+# DCGAN
 
-This repository contains the unofficial PyTorch implementation of the following paper:
+This is an unofficial PyTorch implementation of the following paper:
 
 > **Unsupervised Representation Learning with Deep Convolutional Generative Adversarial Networks**<br>
 > Alec Radford, Luke Metz, Soumith Chintala <br>
