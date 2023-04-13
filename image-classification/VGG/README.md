@@ -14,7 +14,7 @@ This is an unofficial PyTorch implementation of the following paper:
 ## Usage
 Following command train the model
 ```bash
-python train.py
+accelerate launch train.py
 ```
 
 Confirm that the number of parameters are same as the paper.
