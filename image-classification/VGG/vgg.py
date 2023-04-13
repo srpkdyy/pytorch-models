@@ -4,6 +4,13 @@ import torch.nn as nn
 from functools import partial
 
 
+Conv1 = partial(nn.Conv2d, kernel_size=1, stride=1, padding=0)
+Conv3 = partial(nn.Conv2d, kernel_size=3, stride=1, padding=1)
+Conv7 = partial(nn.Conv2d, kernel_size=7, stride=1, padding=0)
+ReLU = partial(nn.ReLU, inplace=True)
+Pool = partial(nn.MaxPool2d, kernel_size=2, stride=2)
+
+
 A_ARCH = [          # Out ch
     [Conv3],        # 64
     [Conv3],        # 128
@@ -11,12 +18,6 @@ A_ARCH = [          # Out ch
     [Conv3, Conv3], # 512
     [Conv3, Conv3], # 512
 ]
-
-Conv1 = partial(nn.Conv2d, kernel_size=1, stride=1, padding=0)
-Conv3 = partial(nn.Conv2d, kernel_size=3, stride=1, padding=1)
-Conv7 = partial(nn.Conv2d, kernel_size=7, stride=1, padding=0)
-ReLU = partial(nn.ReLU, inplace=True)
-Pool = partial(nn.MaxPool2d, kernel_size=2, stride=2)
 
 
 # Local Response Normalization
@@ -110,7 +111,7 @@ class VGG(nn.Module):
 
         self.apply(self.init_weights)
 
-    def set_weights_with_trained_A(self, model_typeA):
+    def set_weights_with_trained_A(self, weights_typeA):
         pass
 
     def init_weights(self, m):
