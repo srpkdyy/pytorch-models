@@ -1,14 +1,15 @@
 import os
 import dataclasses
-from accelerate import Accelerator
 
+import wandb
 import torch
 import torch.nn as nn
 import torch.optim as optim
+from accelerate import Accelerator
 from torch.utils.data import DataLoader
 from torchvision import transforms as TF
-from torchvision.datasets import ImageFolder
-from torchvision.utils import save_image
+from torchvision.datasets import LSUN
+from torchvision.utils import make_grid
 
 from dcgan import Generator, Discriminator
 
@@ -35,22 +36,21 @@ class Config:
     epoch: int = 1
 
     # Log
-    logdir: str = 'logs'
+    nrow: int = 8
 
 cfg = Config()
 
 
 def main():
-    os.makedirs(cfg.logdir, exist_ok=True)
-
     ar = Accelerator(log_with='wandb')
     ar.init_trackers('DCGAN', config=cfg)
 
     device = ar.device
-    cfg.lr *= ar.num_processes
+    lr = cfg.lr * ar.num_processes
 
-    ds = ImageFolder(
+    ds = LSUN(
         cfg.root,
+        ['bedroom_train'],
         transform=TF.Compose([
             TF.Resize(cfg.img_size),
             TF.CenterCrop(cfg.img_size),
@@ -63,29 +63,28 @@ def main():
         batch_size=cfg.batch_size,
         shuffle=True,
         num_workers=cfg.workers,
-        pin_memory=True,
-        drop_last=True
+        pin_memory=True
     )
 
     G = Generator(cfg.z_dim, cfg.img_size).to(device)
     D = Discriminator(cfg.z_dim, cfg.img_size).to(device)
 
     criterion = nn.BCELoss().to(device)
-    G_optimizer = optim.Adam(G.parameters(), cfg.lr, betas=(cfg.beta1, 0.999))
-    D_optimizer = optim.Adam(D.parameters(), cfg.lr, betas=(cfg.beta1, 0.999))
+    G_optimizer = optim.Adam(G.parameters(), lr, betas=(cfg.beta1, 0.999))
+    D_optimizer = optim.Adam(D.parameters(), lr, betas=(cfg.beta1, 0.999))
 
     dl, G, D, G_optimizer, D_optimizer = ar.prepare(
         dl, G, D, G_optimizer, D_optimizer
     )
 
-    fake_label = torch.zeros(cfg.batch_size, device=device)
     real_label = torch.ones(cfg.batch_size, device=device)
+    fake_label = torch.zeros(cfg.batch_size, device=device)
 
     for epoch in range(cfg.epoch):
         G.train()
         D.train()
 
-        for imgs, label in dl:
+        for i, (imgs, label) in enumerate(dl):
             # Update Discriminator with Real
             D_real_outputs = D(imgs)
 
@@ -116,12 +115,17 @@ def main():
                 'D_real_loss': D_real_loss.mean().item(),
                 'D_fake_loss': D_fake_loss.mean().item()
             }
-            ar.log(log, step=i)
-            ar.print(log)
+            ar.print(f'Iter:{i}, ', log)
+
+        log.update({
+            'Generated samples': wandb.Image(make_grid(
+                samples[:cfg.nrow**2], nrow=cfg.nrow,
+                value_range=(-1, 1), normalize=True
+            ))
+        })
+        ar.log(log, step=epoch)
 
     ar.end_training()
-    save_image(samples[:64], f'{cfg.logdir}/epoch{epoch}.png', nrow=8,
-               value_range=(-1, 1), normalize=True)
 
 
 if __name__ == '__main__':
