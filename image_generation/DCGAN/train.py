@@ -47,7 +47,7 @@ def main():
     ar.init_trackers('DCGAN', config=cfg)
 
     device = ar.device
-    cfg.lr *= ar.num_processes
+    lr = cfg.lr * ar.num_processes
 
     ds = ImageFolder(
         cfg.root,
@@ -63,16 +63,15 @@ def main():
         batch_size=cfg.batch_size,
         shuffle=True,
         num_workers=cfg.workers,
-        pin_memory=True,
-        drop_last=True
+        pin_memory=True
     )
 
     G = Generator(cfg.z_dim, cfg.img_size).to(device)
     D = Discriminator(cfg.z_dim, cfg.img_size).to(device)
 
     criterion = nn.BCELoss().to(device)
-    G_optimizer = optim.Adam(G.parameters(), cfg.lr, betas=(cfg.beta1, 0.999))
-    D_optimizer = optim.Adam(D.parameters(), cfg.lr, betas=(cfg.beta1, 0.999))
+    G_optimizer = optim.Adam(G.parameters(), lr, betas=(cfg.beta1, 0.999))
+    D_optimizer = optim.Adam(D.parameters(), lr, betas=(cfg.beta1, 0.999))
 
     dl, G, D, G_optimizer, D_optimizer = ar.prepare(
         dl, G, D, G_optimizer, D_optimizer
@@ -85,7 +84,7 @@ def main():
         G.train()
         D.train()
 
-        for imgs, label in dl:
+        for i, (imgs, label) in enumerate(dl):
             # Update Discriminator with Real
             D_real_outputs = D(imgs)
 
@@ -116,8 +115,9 @@ def main():
                 'D_real_loss': D_real_loss.mean().item(),
                 'D_fake_loss': D_fake_loss.mean().item()
             }
-            ar.log(log, step=i)
-            ar.print(log)
+            ar.print(f'Epoch:{epoch}, Iter:{i}, ', log)
+
+        ar.log(log, step=epoch)
 
     ar.end_training()
     save_image(samples[:64], f'{cfg.logdir}/epoch{epoch}.png', nrow=8,
