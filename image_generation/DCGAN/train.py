@@ -6,6 +6,7 @@ import torch
 import torch.nn as nn
 import torch.optim as optim
 from accelerate import Accelerator
+from accelerate.utils import set_seed
 from torch.utils.data import DataLoader
 from torchvision import transforms as TF
 from torchvision.datasets import LSUN
@@ -14,6 +15,7 @@ from torchvision.utils import make_grid
 from dcgan import Generator, Discriminator
 
 
+set_seed(42)
 torch.backends.cudnn.benchmark = True
 
 
@@ -116,6 +118,7 @@ def main():
                 'D_fake_loss': D_fake_loss.mean().item()
             }
             ar.print(f'Iter:{i}, ', log)
+            ar.log(log, step=i)
 
         log.update({
             'Generated samples': wandb.Image(make_grid(
@@ -123,7 +126,7 @@ def main():
                 value_range=(-1, 1), normalize=True
             ))
         })
-        ar.log(log, step=epoch)
+        ar.log(log, step=i+1)
 
     ar.end_training()
 

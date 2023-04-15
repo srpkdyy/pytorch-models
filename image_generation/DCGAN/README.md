@@ -7,7 +7,8 @@ This is an unofficial PyTorch implementation of the following paper:
 > https://arxiv.org/abs/1812.04948
 
 ## Results
-This program does not train the model well.
+The figures show each loss of training with one GPU.
 
-If you have any ideas, please send me an Issue.
-
+<img src="./assets/G-loss.png" width="500"></img>
+<img src="./assets/D-real-loss.png" width="500"></img>
+<img src="./assets/D-fake-loss.png" width="500"></img>
