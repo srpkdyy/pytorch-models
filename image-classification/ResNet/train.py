@@ -19,7 +19,7 @@ from resnet import ResNet
 torch.backends.cudnn.benchmark = True
 
 
-@dataclasses.dataclass
+@dataclasses.dataclass(frozen=True)
 class Config:
     # Dataset
     root: str = 'data'
@@ -29,40 +29,49 @@ class Config:
     workers: int = 8
 
     # Optimizer
-    lr: float = 1e-2
+    lr: float = 0.1
     momentum: float = 0.9
-    weight_decay: float = 5e-4
+    weight_decay: float = 0.0001
     
     # Scheduler
     factor = 0.1
 
     # Model
-    net_type: str = 'A'
+    arch_type: str = '18' # [18, 34, 50, 101, 154]
     n_classes: int = 1000
 
     # Training
-    epoch: int = 74
+    iters: int = 600000
 
     # Log
-    logdir: str = 'logs'
+    log_interval: int = 100
+
 
 cfg = Config()
 
 
-def main():
-    os.makedirs(cfg.logdir, exist_ok=True)
+def cycle(train_dl):
+    while True:
+        for data in train_dl:
+            yield data
 
+
+def main():
     ar = Accelerator(log_with='wandb')
-    ar.init_trackers('VGG', config=cfg)
+    ar.init_trackers('ResNet', config=cfg)
 
     device = ar.device
-    cfg.lr *= ar.num_processes
+    ndevice = ar.num_processes
+    lr = cfg.lr * ndevice
+    iters = cfg.iters // ndevice
 
     tf = TF.Compose([
         TF.Resize(cfg.resize),
         TF.RandomCrop(cfg.crop_size),
         TF.RandomHorizontalFlip(),
         TF.ToTensor(),
+        # per-pixel mean subtracted. ref-21
+        # color augmentation
         TF.Normalize([0.485, 0.456, 0.406],
                      [0.229, 0.224, 0.225])
     ])
@@ -74,10 +83,11 @@ def main():
         'num_workers': cfg.workers,
         'pin_memory': True
     }
+
     train_dl = DataLoader(train_ds, shuffle=True, **kwargs)
     valid_dl = DataLoader(valid_ds, shuffle=False, **kwargs)
 
-    model = VGG(cfg.net_type, cfg.n_classes)
+    model = ResNet(cfg.arch_type)
 
     criterion = nn.CrossEntropyLoss()
     optimizer = optim.SGD(
@@ -87,47 +97,54 @@ def main():
         weight_decay=cfg.weight_decay,
     )
     scheduler = optim.lr_scheduler.ReduceLROnPlateau(
-        optimizer, mode='max', factor=cfg.factor
+        optimizer, mode='min', factor=cfg.factor
     )
 
     train_dl, valid_dl, model, optimizer, scheduler = ar.prepare(
         train_dl, valid_dl, model, optimizer, scheduler
     )
+    train_dl = cycle(train_dl)
 
-    step = itertools.count()
+    model.train()
     valid_acc_metric = Accuracy('multiclass', num_classes=cfg.n_classes).to(device)
 
-    for epoch in range(cfg.epoch):
-        model.train()
+    for step in tqdm(range(iters), disable=not ar.is_local_main_process):
+        outputs = model(images)
+        loss = criterion(outputs, labels)
 
-        for images, labels in tqdm(train_dl, desc='Train', disable=not ar.is_local_main_process):
-            outputs = model(images)
-            loss = criterion(outputs, labels)
+        optimizer.zero_grad()
+        ar.backward(loss)
+        optimizer.step()
 
-            optimizer.zero_grad()
-            ar.backward(loss)
-            optimizer.step()
-
-            ar.log({'Train Loss': loss.item()}, step=next(step))
-
-        model.eval()
-        valid_acc_metric.reset()
-
-        for images, labels in tqdm(valid_dl, desc='Valid', disable=not ar.is_local_main_process):
-            with torch.no_grad():
-                outputs = model(images)
-            preds = outputs.argmax(dim=1)
-            valid_acc_metric.update(preds, labels)
-
-        valid_acc = valid_acc_metric.compute().item()
-        scheduler.step(valid_acc)
+        train_loss = loss.item()
+        scheduler.step(loss.item())
 
         log = {
-            'Valid Acc': valid_acc,
-            'learning rate': optimizer.param_groups[0]['lr'],
+            'Train Loss': train_loss,
+            'Learning rate': optimizer.param_groups[0]['lr']
         }
-        ar.log(log, step=epoch)
-        ar.print(log)
+        ar.log(log, step=step)
+
+        if step % cfg.log_interval == 0:
+            model.eval()
+            valid_acc_metric.reset()
+
+            for images, labels in tqdm(valid_dl, desc='Valid', disable=not ar.is_local_main_process):
+                # 10 crop settings [21]
+                with torch.no_grad():
+                    outputs = model(images)
+                preds = outputs.argmax(dim=1)
+                valid_acc_metric.update(preds, labels)
+
+            valid_acc = valid_acc_metric.compute().item()
+
+            log = {
+                'Valid Acc': valid_acc,
+            }
+            ar.log({'Valid Acc': valid_acc}, step=step)
+            ar.print('Valid', log)
+
+            model.train()
 
     ar.end_training()
 
