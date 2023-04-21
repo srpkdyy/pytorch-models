@@ -24,7 +24,7 @@ class Config:
     # Dataset
     root: str = 'data'
     batch_size: int = 256
-    resize: int = 256
+    resize: tuple = (256, 480)
     crop_size: int = 224
     workers: int = 8
 
@@ -37,14 +37,14 @@ class Config:
     factor = 0.1
 
     # Model
-    arch_type: str = '18' # [18, 34, 50, 101, 154]
+    arch_type: str = '18' # [18, 34, 50, 101, 152]
     n_classes: int = 1000
 
     # Training
     iters: int = 600000
 
     # Log
-    log_interval: int = 100
+    log_interval: int = 500
 
 
 cfg = Config()
@@ -65,29 +65,39 @@ def main():
     lr = cfg.lr * ndevice
     iters = cfg.iters // ndevice
 
-    tf = TF.Compose([
-        TF.Resize(cfg.resize),
-        TF.RandomCrop(cfg.crop_size),
-        TF.RandomHorizontalFlip(),
-        TF.ToTensor(),
-        # per-pixel mean subtracted. ref-21
-        # color augmentation
-        TF.Normalize([0.485, 0.456, 0.406],
-                     [0.229, 0.224, 0.225])
-    ])
-    train_ds = ImageNet(cfg.root, 'train', transform=tf)
-    valid_ds = ImageNet(cfg.root, 'val', transform=tf)
+    normalize = TF.Normalize([0.485, 0.456, 0.406], [0.229, 0.224, 0.225])
+    train_ds = ImageNet(
+        cfg.root,
+        'train',
+        transform=TF.Compose([
+            TF.Resize(cfg.resize[1]),
+            TF.RandomApply(TF.Resize(cfg.resize[0])),
+            TF.RandomCrop(cfg.crop_size),
+            TF.RandomHorizontalFlip(),
+            TF.ToTensor(),
+            normalize,
+        ])
+    )
+    valid_ds = ImageNet(
+        cfg.root,
+        'val',
+        transform=TF.Compose([
+            TF.Resize(cfg.resize[0]),
+            TF.CenterCrop(cfg.crop_size),
+            TF.ToTensor(),
+            normalize,
+        ])
+    )
 
     kwargs = {
         'batch_size': cfg.batch_size,
         'num_workers': cfg.workers,
         'pin_memory': True
     }
-
     train_dl = DataLoader(train_ds, shuffle=True, **kwargs)
     valid_dl = DataLoader(valid_ds, shuffle=False, **kwargs)
 
-    model = ResNet(cfg.arch_type)
+    model = ResNet(cfg.arch_type, cfg.n_classes)
 
     criterion = nn.CrossEntropyLoss()
     optimizer = optim.SGD(
@@ -97,18 +107,24 @@ def main():
         weight_decay=cfg.weight_decay,
     )
     scheduler = optim.lr_scheduler.ReduceLROnPlateau(
-        optimizer, mode='min', factor=cfg.factor
+        optimizer, mode='max', factor=cfg.factor
     )
 
     train_dl, valid_dl, model, optimizer, scheduler = ar.prepare(
         train_dl, valid_dl, model, optimizer, scheduler
     )
-    train_dl = cycle(train_dl)
 
-    model.train()
+    train_dl = cycle(train_dl)
+    iters_pbar = tqdm(range(iters), desc='Train', disable=not ar.is_local_main_process)
+    valid_pbar = tqdm(valid_dl, desc='Valid', disable=not ar.is_local_main_process)
+
     valid_acc_metric = Accuracy('multiclass', num_classes=cfg.n_classes).to(device)
 
-    for step in tqdm(range(iters), disable=not ar.is_local_main_process):
+    for step in iters_pbar:
+        model.train()
+
+        images, labels = next(train_dl)
+
         outputs = model(images)
         loss = criterion(outputs, labels)
 
@@ -116,8 +132,7 @@ def main():
         ar.backward(loss)
         optimizer.step()
 
-        train_loss = loss.item()
-        scheduler.step(loss.item())
+        train_loss = ar.gather(loss).mean().item()
 
         log = {
             'Train Loss': train_loss,
@@ -129,7 +144,7 @@ def main():
             model.eval()
             valid_acc_metric.reset()
 
-            for images, labels in tqdm(valid_dl, desc='Valid', disable=not ar.is_local_main_process):
+            for images, labels in valid_pbar:
                 # 10 crop settings [21]
                 with torch.no_grad():
                     outputs = model(images)
@@ -138,13 +153,13 @@ def main():
 
             valid_acc = valid_acc_metric.compute().item()
 
+            scheduler.step(valid_acc)
+
             log = {
                 'Valid Acc': valid_acc,
             }
-            ar.log({'Valid Acc': valid_acc}, step=step)
+            ar.log(log, step=step)
             ar.print('Valid', log)
-
-            model.train()
 
     ar.end_training()
 
