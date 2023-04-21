@@ -62,7 +62,7 @@ class ResNet(nn.Module):
     def __init__(self, arch_type='18', n_classes=1000):
         super().__init__()
 
-        self.init_conv = Conv2d(3, 64, 7, stride=2, padding=3),
+        self.init_conv = Conv2d(3, 64, 7, stride=2, padding=3)
         self.norm = nn.BatchNorm2d(64)
         self.relu = nn.ReLU()
         self.pool = nn.MaxPool2d(3, stride=2, padding=1)
@@ -96,7 +96,7 @@ class ResNet(nn.Module):
 
     def init_weights(self, m):
         if isinstance(m, nn.Conv2d):
-            nn.init.kaiming_normal_(m.weight)
+            nn.init.kaiming_normal_(m.weight, mode='fan_out')
         elif isinstance(m, nn.BatchNorm2d):
             nn.init.constant_(m.weight, 1)
             nn.init.constant_(m.bias, 0)

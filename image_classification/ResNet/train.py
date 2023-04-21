@@ -3,6 +3,7 @@ import dataclasses
 import itertools
 
 import torch
+import accelerate
 import torch.nn as nn
 import torch.optim as optim
 from accelerate import Accelerator
@@ -17,6 +18,7 @@ from resnet import ResNet
 
 
 torch.backends.cudnn.benchmark = True
+accelerate.utils.set_seed(42)
 
 
 @dataclasses.dataclass(frozen=True)
@@ -70,8 +72,7 @@ def main():
         cfg.root,
         'train',
         transform=TF.Compose([
-            TF.Resize(cfg.resize[1]),
-            TF.RandomApply(TF.Resize(cfg.resize[0])),
+            TF.RandomChoice([TF.Resize(s) for s in cfg.resize])
             TF.RandomCrop(cfg.crop_size),
             TF.RandomHorizontalFlip(),
             TF.ToTensor(),
@@ -118,7 +119,8 @@ def main():
     iters_pbar = tqdm(range(iters), desc='Train', disable=not ar.is_local_main_process)
     valid_pbar = tqdm(valid_dl, desc='Valid', disable=not ar.is_local_main_process)
 
-    valid_acc_metric = Accuracy('multiclass', num_classes=cfg.n_classes).to(device)
+    top1_acc_metric = Accuracy('multiclass', num_classes=cfg.n_classes).to(device)
+    top5_acc_metric = Accuracy('multiclass', num_classes=cfg.n_classes, top_k=5).to(device)
 
     for step in iters_pbar:
         model.train()
@@ -142,24 +144,29 @@ def main():
 
         if step % cfg.log_interval == 0:
             model.eval()
-            valid_acc_metric.reset()
+
+            top1_acc_metric.reset()
+            top5_acc_metric.reset()
 
             for images, labels in valid_pbar:
-                # 10 crop settings [21]
                 with torch.no_grad():
                     outputs = model(images)
                 preds = outputs.argmax(dim=1)
-                valid_acc_metric.update(preds, labels)
 
-            valid_acc = valid_acc_metric.compute().item()
+                top1_acc_metric.update(preds, labels)
+                top5_acc_metric.update(outputs, labels)
 
-            scheduler.step(valid_acc)
+            top1_acc = top1_acc_metric.compute().item()
+            top5_acc = top1_acc_metric.compute().item()
+
+            scheduler.step(top1_acc)
 
             log = {
-                'Valid Acc': valid_acc,
+                'Top1 Acc': top1_acc,
+                'Top5 Acc': top5_acc,
             }
             ar.log(log, step=step)
-            ar.print('Valid', log)
+            ar.print(log)
 
     ar.end_training()
 
