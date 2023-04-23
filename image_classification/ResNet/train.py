@@ -37,6 +37,7 @@ class Config:
     
     # Scheduler
     factor = 0.1
+    mode = 'abs'
 
     # Model
     arch_type: str = '18' # [18, 34, 50, 101, 152]
@@ -72,7 +73,7 @@ def main():
         cfg.root,
         'train',
         transform=TF.Compose([
-            TF.RandomChoice([TF.Resize(s) for s in cfg.resize])
+            TF.RandomChoice([TF.Resize(s) for s in cfg.resize]),
             TF.RandomCrop(cfg.crop_size),
             TF.RandomHorizontalFlip(),
             TF.ToTensor(),
@@ -108,7 +109,7 @@ def main():
         weight_decay=cfg.weight_decay,
     )
     scheduler = optim.lr_scheduler.ReduceLROnPlateau(
-        optimizer, mode='max', factor=cfg.factor
+        optimizer, mode='max', factor=cfg.factor, threshold_mode=cfg.mode
     )
 
     train_dl, valid_dl, model, optimizer, scheduler = ar.prepare(
@@ -157,7 +158,7 @@ def main():
                 top5_acc_metric.update(outputs, labels)
 
             top1_acc = top1_acc_metric.compute().item()
-            top5_acc = top1_acc_metric.compute().item()
+            top5_acc = top5_acc_metric.compute().item()
 
             scheduler.step(top1_acc)
 

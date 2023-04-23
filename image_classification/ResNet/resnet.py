@@ -32,7 +32,10 @@ class BasicBlock(nn.Module):
         if in_dim == out_dim:
             self.shortcut = nn.Identity()
         else:
-            self.shortcut = Conv2d(in_dim, out_dim, 1, self.stride)
+            self.shortcut = nn.Sequential(
+                Conv2d(in_dim, out_dim, 1, self.stride),
+                nn.BatchNorm2d(out_dim)
+            )
 
     def forward(self, x):
         h = self.block(x)
