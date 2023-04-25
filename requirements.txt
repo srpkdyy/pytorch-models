@@ -1,5 +1,7 @@
 accelerate
+einops
+git+https://github.com/srpkdyy/ezdl.git
 torch
 torchvision
 torchmetrics
-einops
+wandb
