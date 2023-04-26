@@ -127,7 +127,7 @@ def main():
 
         G.eval()
         with torch.no_grad():
-            samples = G(torch.randn(cfg.nrow**2, cfg.z_dim))
+            samples, _ = G(torch.randn(cfg.nrow**2, cfg.z_dim))
 
         save_gif(make_grid_video(
             samples, nrow=cfg.nrow, pad=1
