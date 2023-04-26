@@ -9,7 +9,7 @@ import torch.optim as optim
 from torch.utils.data import DataLoader
 from torchvision import transforms as TF
 from ezdl.datasets import VideoReader
-from ezdl.utils import save_gif
+from ezdl.utils import make_grid_video, save_gif
 
 from vgan import Generator, Discriminator
 
