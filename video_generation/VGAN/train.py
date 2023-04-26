@@ -26,6 +26,9 @@ class Config:
     frame_size: int = 64
     workers: int = 8
 
+    # Loss function
+    lam: float = 0.1
+
     # Optimizer
     lr: float = 0.0002
     beta1: float = 0.5
@@ -44,7 +47,7 @@ cfg = Config()
 
 
 def main():
-    os.makedirs(logdir, exist_ok=True)
+    os.makedirs(cfg.logdir, exist_ok=True)
 
     ar = accelerate.Accelerator(log_with='wandb')
     ar.init_trackers('VGAN', config=cfg)
@@ -66,9 +69,12 @@ def main():
     )
 
     G = Generator(cfg.z_dim)
-    D = Discriminator(cfg.z_dim)
+    D = Discriminator()
 
-    criterion = nn.BCELoss().to(device)
+    G = nn.SyncBatchNorm.convert_sync_batchnorm(G)
+    D = nn.SyncBatchNorm.convert_sync_batchnorm(D)
+
+    criterion = nn.BCEWithLogitsLoss().to(device)
     G_optimizer = optim.Adam(G.parameters(), lr, betas=(cfg.beta1, 0.999))
     D_optimizer = optim.Adam(D.parameters(), lr, betas=(cfg.beta1, 0.999))
 
@@ -95,32 +101,37 @@ def main():
 
             # Update Discriminator with Fake
             noise = torch.randn(cfg.batch_size, cfg.z_dim, device=device)
-            D_fake_outputs = D(G(noise).detach())
+            samples, mask = G(noise)
+            D_fake_outputs = D(samples.detach())
 
             D_fake_loss = criterion(D_fake_outputs, fake_label)
             ar.backward(D_fake_loss)
             D_optimizer.step()
 
             # Update Generator
-            noise = torch.randn(cfg.batch_size, cfg.z_dim, device=device)
-            samples = G(noise)
             outputs = D(samples)
 
             G_optimizer.zero_grad()
-            G_loss = criterion(outputs, real_label)
+            G_loss = criterion(outputs, real_label) + cfg.lam * torch.mean(mask)
             ar.backward(G_loss)
             G_optimizer.step()
 
             log = {
-                'G_loss': G_loss.mean().item(),
-                'D_real_loss': D_real_loss.mean().item(),
-                'D_fake_loss': D_fake_loss.mean().item()
+                'G_loss': ar.gather(G_loss).mean().item(),
+                'D_real_loss': ar.gather(D_real_loss).mean().item(),
+                'D_fake_loss': ar.gather(D_fake_loss).mean().item()
             }
             ar.log(log, step=next(step))
 
+        ar.print(log)
+
+        G.eval()
+        with torch.no_grad():
+            samples = G(torch.randn(cfg.nrow**2, cfg.z_dim))
+
         save_gif(make_grid_video(
-            samples[:cfg.nrow**2], nrow=cfg.nrow, pad=1
-        ), f'{logdir}/{epoch}.gif', fps=4)
+            samples, nrow=cfg.nrow, pad=1
+        ), f'{cfg.logdir}/{epoch}.gif', fps=4)
 
     ar.end_training()
 

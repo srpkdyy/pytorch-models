@@ -5,8 +5,11 @@ from einops.layers.torch import Rearrange
 
 @torch.no_grad()
 def init_weights(m):
-    if isinstance(m, (nn.Conv2d, nn.Conv3d, nn.ConvTranspose3d)):
+    if isinstance(m, (nn.Conv3d, nn.ConvTranspose2d, nn.ConvTranspose3d)):
         nn.init.normal_(m.weight, 0.0, 0.01)
+    elif isinstance(m, (nn.BatchNorm2d, nn.BatchNorm3d)):
+        nn.init.constant_(m.weight, 1)
+        nn.init.constant_(m.bias, 0)
 
 
 class UpBlock2D(nn.Module):
@@ -54,15 +57,15 @@ class Generator(nn.Module):
         self.ups_3d = nn.Sequential(*ups_3d)
 
         self.background = nn.Sequential(
-            UpBlock2D(dims[-1], 3),
+            nn.ConvTranspose2d(dims[-1], 3, 4, 2, 1, bias=False),
             nn.Tanh(),
         )
         self.foreground = nn.Sequential(
-            UpBlock3D(dims[-1], 3),
+            nn.ConvTranspose3d(dims[-1], 3, 4, 2, 1, bias=False),
             nn.Tanh()
         )
         self.mask = nn.Sequential(
-            UpBlock3D(dims[-1], 1),
+            nn.ConvTranspose3d(dims[-1], 1, 4, 2, 1, bias=False),
             nn.Sigmoid()
         )
 
@@ -77,7 +80,7 @@ class Generator(nn.Module):
         m = self.mask(h_3d)
 
         out = m * f + (1 - m) * b
-        return out
+        return out, m
 
 
 class DownBlock(nn.Module):
@@ -86,7 +89,7 @@ class DownBlock(nn.Module):
 
         self.conv = nn.Conv3d(in_dim, out_dim, 4, 2, 1, bias=False)
         self.norm = nn.BatchNorm3d(out_dim)
-        self.act = nn.LeakyReLU()
+        self.act = nn.LeakyReLU(0.2)
 
     def forward(self, x):
         return self.act(self.norm(self.conv(x)))
@@ -96,16 +99,19 @@ class Discriminator(nn.Module):
     def __init__(self, channels=3):
         super().__init__()
 
-        dims = [channels, 64, 128, 256, 512]
+        dims = [64, 128, 256, 512]
 
-        downs = []
+        downs = [
+            nn.Conv3d(channels, dims[0], 4, 2, 1, bias=False),
+            nn.LeakyReLU(0.2),
+        ]
         for i in range(len(dims) - 1):
             downs.append(DownBlock(dims[i], dims[i+1]))
         self.downs = nn.Sequential(*downs)
 
         self.classifier = nn.Sequential(
             nn.Conv3d(dims[-1], 1, (2, 4, 4), 2, bias=False),
-            nn.Flatten()
+            nn.Flatten(start_dim=0)
         )
 
         self.apply(init_weights)
