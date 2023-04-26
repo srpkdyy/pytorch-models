@@ -8,6 +8,7 @@ This is an unofficial PyTorch implementation of the following paper:
 
 ## TODO
 - [ ] Add RGB color shift for augmentation.
+- [ ] 10 crops prediction on validation.
 
 ## Usage
 Following command train the model

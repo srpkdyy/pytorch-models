@@ -37,7 +37,6 @@ class Config:
     
     # Scheduler
     factor = 0.1
-    mode = 'abs'
 
     # Model
     arch_type: str = '18' # [18, 34, 50, 101, 152]
@@ -100,6 +99,7 @@ def main():
     valid_dl = DataLoader(valid_ds, shuffle=False, **kwargs)
 
     model = ResNet(cfg.arch_type, cfg.n_classes)
+    model = nn.SyncBatchNorm.convert_sync_batchnorm(model)
 
     criterion = nn.CrossEntropyLoss()
     optimizer = optim.SGD(
@@ -109,7 +109,7 @@ def main():
         weight_decay=cfg.weight_decay,
     )
     scheduler = optim.lr_scheduler.ReduceLROnPlateau(
-        optimizer, mode='max', factor=cfg.factor, threshold_mode=cfg.mode
+        optimizer, mode='min', factor=cfg.factor
     )
 
     train_dl, valid_dl, model, optimizer, scheduler = ar.prepare(
@@ -160,7 +160,7 @@ def main():
             top1_acc = top1_acc_metric.compute().item()
             top5_acc = top5_acc_metric.compute().item()
 
-            scheduler.step(top1_acc)
+            scheduler.step(1 - top1_acc)
 
             log = {
                 'Top1 Acc': top1_acc,
