@@ -1,5 +1,6 @@
 import os
 import dataclasses
+import itertools
 
 import wandb
 import torch
@@ -10,7 +11,7 @@ from accelerate.utils import set_seed
 from torch.utils.data import DataLoader
 from torchvision import transforms as TF
 from torchvision.datasets import LSUN
-from torchvision.utils import make_grid
+from torchvision.utils import make_grid, save_image
 
 from dcgan import Generator, Discriminator
 
@@ -71,7 +72,7 @@ def main():
     G = Generator(cfg.z_dim, cfg.img_size).to(device)
     D = Discriminator(cfg.z_dim, cfg.img_size).to(device)
 
-    criterion = nn.BCELoss().to(device)
+    criterion = nn.BCEWithLogitsLoss().to(device)
     G_optimizer = optim.Adam(G.parameters(), lr, betas=(cfg.beta1, 0.999))
     D_optimizer = optim.Adam(D.parameters(), lr, betas=(cfg.beta1, 0.999))
 
@@ -82,11 +83,13 @@ def main():
     real_label = torch.ones(cfg.batch_size, device=device)
     fake_label = torch.zeros(cfg.batch_size, device=device)
 
+    step = itertools.count()
+
     for epoch in range(cfg.epoch):
         G.train()
         D.train()
 
-        for i, (imgs, label) in enumerate(dl):
+        for imgs, label in dl:
             # Update Discriminator with Real
             D_real_outputs = D(imgs)
 
@@ -113,20 +116,25 @@ def main():
             G_optimizer.step()
 
             log = {
-                'G_loss': G_loss.mean().item(),
-                'D_real_loss': D_real_loss.mean().item(),
-                'D_fake_loss': D_fake_loss.mean().item()
+                'G_loss': ar.gather(G_loss).mean().item(),
+                'D_real_loss': ar.gather(D_real_loss).mean().item(),
+                'D_fake_loss': ar.gather(D_fake_loss).mean().item()
             }
-            ar.print(f'Iter:{i}, ', log)
-            ar.log(log, step=i)
+            ar.log(log, step=next(step))
+            ar.print(log)
 
-        log.update({
+        G.eval()
+        with torch.no_grad():
+            noise = 2 * torch.rand(cfg.nrow**2, cfg.z_dim, device=device) - 1
+            samples = G(noise)
+
+        log = {
             'Generated samples': wandb.Image(make_grid(
-                samples[:cfg.nrow**2], nrow=cfg.nrow,
+                samples, nrow=cfg.nrow,
                 value_range=(-1, 1), normalize=True
             ))
-        })
-        ar.log(log, step=i+1)
+        }
+        ar.log(log, step=next(step))
 
     ar.end_training()
 

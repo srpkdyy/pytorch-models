@@ -32,7 +32,7 @@ class Generator(nn.Module):
         self.z_dim = z_dim
         self.img_size = img_size
 
-        self.init_layer = nn.Sequential(
+        self.input_layer = nn.Sequential(
             Rearrange('b c -> b c 1 1'),
             nn.ConvTranspose2d(self.z_dim, 1024, 4, bias=False),
             nn.BatchNorm2d(1024),
@@ -43,7 +43,7 @@ class Generator(nn.Module):
             UpBlock(512, 256),
             UpBlock(256, 128)
         )
-        self.final_layer = nn.Sequential(
+        self.output_layer = nn.Sequential(
             nn.ConvTranspose2d(128, 3, 4, 2, 1, bias=False),
             nn.Tanh()
         )
@@ -51,9 +51,9 @@ class Generator(nn.Module):
         self.apply(init_weights)
 
     def forward(self, x):
-        x = self.init_layer(x)
+        x = self.input_layer(x)
         x = self.ups(x)
-        x = self.final_layer(x)
+        x = self.output_layer(x)
         return x
 
 
@@ -77,22 +77,25 @@ class Discriminator(nn.Module):
         self.z_dim = z_dim
         self.img_size = img_size
 
+        self.input_layer = nn.Sequential(
+            nn.Conv2d(3, 128, 4, 2, 1, bias=False),
+            nn.LeakyReLU(2e-1),
+        )
         self.downs = nn.Sequential(
-            DownBlock(3, 128),
             DownBlock(128, 256),
             DownBlock(256, 512),
             DownBlock(512, 1024)
         )
-        self.final_layer = nn.Sequential(
+        self.output_layer = nn.Sequential(
             nn.Conv2d(1024, 1, 4, 1, bias=False),
             nn.Flatten(start_dim=0),
-            nn.Sigmoid()
         )
 
         self.apply(init_weights)
 
     def forward(self, x):
+        x = self.input_layer(x)
         x = self.downs(x)
-        x = self.final_layer(x)
+        x = self.output_layer(x)
         return x
 
