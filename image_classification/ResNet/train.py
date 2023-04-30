@@ -104,7 +104,7 @@ def main():
     criterion = nn.CrossEntropyLoss()
     optimizer = optim.SGD(
         model.parameters(),
-        lr=cfg.lr,
+        lr=lr,
         momentum=cfg.momentum,
         weight_decay=cfg.weight_decay,
     )
