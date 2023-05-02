@@ -1,14 +1,25 @@
 import torch.nn as nn
+from einops import rearrange
+from einops.layers.torch import Rearrange
 
 
-class PosEnc(nn.Module):
-    def __init__(self, dim):
+class PositionalEncoding(nn.Module):
+    def __init__(self, dim, max_pos=512):
         super().__init__()
 
-        self.bias = None
+        pos = torch.arange(max_pos)
 
-    def forward(self):
-        return self.bias
+        freq = torch.arange(dim//2) / dim
+        freq = (freq * torch.tensor(10000).log()).exp()
+
+        x = rearrange(pos, 'L -> L 1') / freq
+        x = rearrange(x, 'L D -> L D 1')
+
+        pe = torch.cat((x.sin(), x.cos()), dim=-1)
+        self.pe = rearrange(pe, 'L D sc -> L (D sc)')
+
+    def forward(self, n):
+        return self.pe[:n]
 
 
 class MultiHeadAttention(nn.Module):
@@ -16,6 +27,14 @@ class MultiHeadAttention(nn.Module):
         pass
 
     def forward(self, query, key_value=None):
+        pass
+
+
+class EncoderBlock(nn.Module):
+    def __init__(self):
+        pass
+
+    def forward(self, x):
         pass
 
 
