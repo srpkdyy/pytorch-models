@@ -1,4 +1,7 @@
 # ResNet
+
+![model](assets/block.png)
+
 ## Overview
 This is an unofficial PyTorch implementation of the following paper:
 
