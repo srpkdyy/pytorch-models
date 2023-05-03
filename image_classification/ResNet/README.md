@@ -17,3 +17,12 @@ accelerate launch train.py
 ```
 
 ## Experiments
+All models were trained with the default parameters except model architecture.
+
+| Model | Top-1 acc. | Top-5 acc. |
+| ---   |     :---:      |   :---: |
+| ResNet-18   |      |     |
+| ResNet-34   |      |     |
+| ResNet-50   |      |     |
+| ResNet-101   |   75.6   |   92.6  |
+| ResNet-152 | | |
