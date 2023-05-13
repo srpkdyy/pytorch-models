@@ -7,6 +7,7 @@ import accelerate
 import torch.nn as nn
 import torch.optim as optim
 from accelerate import Accelerator
+from timm import scheduler
 from tqdm import tqdm
 from torch.utils.data import DataLoader
 from torchvision import transforms as TF
@@ -28,6 +29,7 @@ class Config:
     batch_size: int = 4096
     resize: tuple = 256
     crop_size: int = 224
+    test_size: int = 224
     workers: int = 8
 
     # Loss
@@ -59,14 +61,17 @@ def main():
     device = ar.device
     ndevice = ar.num_processes
 
-    normalize = TF.Normalize([0.485, 0.456, 0.406], [0.229, 0.224, 0.225])
+    #normalize = TF.Normalize([0.485, 0.456, 0.406], [0.229, 0.224, 0.225])
+    normalize = TF.Normalize([0.5], [0.5])
+
     train_ds = ImageNet(
         cfg.root,
         'train',
         transform=TF.Compose([
-            # mixup, cutmix, randaugment, randomerasing, stohastic depth, label smoothing
             TF.Resize(cfg.resize),
             TF.RandomCrop(cfg.crop_size),
+            TF.RandAugment(9, 0.5),
+            TF.RandomErasing(scale=(0.01, 0.25)),
             TF.ToTensor(),
             normalize,
         ])
@@ -75,7 +80,7 @@ def main():
         cfg.root,
         'val',
         transform=TF.Compose([
-            TF.Resize(cfg.resize),
+            TF.Resize(cfg.crop_size),
             TF.CenterCrop(cfg.crop_size),
             TF.ToTensor(),
             normalize,
@@ -98,69 +103,71 @@ def main():
         cfg.lr,
         weight_decay=cfg.weight_decay
     )
-    scheduler = None
+    scheduler = scheduler.CosineLRScheduler(
+        optimizer,
+        cfg.epoch,
+        warmup_t=cfg.warmup_epoch,
+        warmup_lr_init=cfg.lr/100,
+    )
 
     train_dl, valid_dl, model, optimizer, scheduler = ar.prepare(
         train_dl, valid_dl, model, optimizer, scheduler
     )
 
-    train_dl = cycle(train_dl)
-    iters_pbar = tqdm(range(iters), desc='Train', disable=not ar.is_local_main_process)
+    train_pbar = tqdm(train_dl, desc='Train', disable=not ar.is_local_main_process)
     valid_pbar = tqdm(valid_dl, desc='Valid', disable=not ar.is_local_main_process)
 
     top1_acc_metric = Accuracy('multiclass', num_classes=cfg.n_classes).to(device)
     top5_acc_metric = Accuracy('multiclass', num_classes=cfg.n_classes, top_k=5).to(device)
 
-    for step in iters_pbar:
+    for epoch in cfg.epoch:
+
         model.train()
 
-        images, labels = next(train_dl)
+        for images, labels in train_pbar:
 
-        outputs = model(images)
-        loss = criterion(outputs, labels)
+            outputs = model(images)
+            loss = criterion(outputs, labels)
 
-        optimizer.zero_grad()
-        ar.backward(loss)
-        optimizer.step()
+            optimizer.zero_grad()
+            ar.backward(loss)
+            optimizer.step()
 
-        train_loss = ar.gather(loss).mean().item()
-
-        log = {
-            'Train Loss': train_loss,
-            'Learning rate': optimizer.param_groups[0]['lr']
-        }
-        ar.log(log, step=step)
-
-        if step % cfg.log_interval == 0:
-            model.eval()
-
-            top1_acc_metric.reset()
-            top5_acc_metric.reset()
-
-            for images, labels in valid_pbar:
-                with torch.no_grad():
-                    outputs = model(images)
-                preds = outputs.argmax(dim=1)
-
-                top1_acc_metric.update(preds, labels)
-                top5_acc_metric.update(outputs, labels)
-
-            top1_acc = top1_acc_metric.compute().item()
-            top5_acc = top5_acc_metric.compute().item()
-
-            scheduler.step(1 - top1_acc)
+            train_loss = ar.gather(loss).mean().item()
 
             log = {
-                'Top1 Acc': top1_acc,
-                'Top5 Acc': top5_acc,
+                'Train Loss': train_loss,
+                'Learning rate': optimizer.param_groups[0]['lr']
             }
             ar.log(log, step=step)
-            ar.print(log)
+
+        model.eval()
+        top1_acc_metric.reset()
+        top5_acc_metric.reset()
+
+        for images, labels in valid_pbar:
+            with torch.no_grad():
+                outputs = model(images)
+            preds = outputs.argmax(dim=1)
+
+            top1_acc_metric.update(preds, labels)
+            top5_acc_metric.update(outputs, labels)
+
+        top1_acc = top1_acc_metric.compute().item()
+        top5_acc = top5_acc_metric.compute().item()
+
+        scheduler.step()
+
+        log = {
+            'Top1 Acc': top1_acc,
+            'Top5 Acc': top5_acc,
+        }
+        ar.log(log, step=step)
+        ar.print(log)
 
     ar.end_training()
 
 
 if __name__ == '__main__':
     main()
-
 

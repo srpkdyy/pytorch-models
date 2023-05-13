@@ -1,6 +1,7 @@
 accelerate
 einops
 git+https://github.com/srpkdyy/ezdl.git
+timm
 torch
 torchvision
 torchmetrics

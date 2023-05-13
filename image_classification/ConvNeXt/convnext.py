@@ -107,11 +107,10 @@ class ConvNeXt(nn.Module):
         self.apply(self.init_weights)
 
     def init_weights(self, m):
-        if isinstance(m, nn.Conv2d):
-            nn.init.kaiming_normal_(m.weight, mode='fan_out')
-        elif isinstance(m, nn.BatchNorm2d):
-            nn.init.constant_(m.weight, 1)
-            nn.init.constant_(m.bias, 0)
+        if isinstance(m, (nn.Conv2d, nn.Linear)):
+            nn.init.trunc_normal_(m.weight, std=0.2, a=-0.4, b=0.4)
+            nn.init.trunc_normal_(m.bias, std=0.2, a=-0.4, b=0.4)
+
 
     def forward(self, x):
         x = self.stem(x)
