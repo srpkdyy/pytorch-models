@@ -28,4 +28,4 @@ All models were trained with the default parameters except model architecture.
 | ResNet-34   |      |     |
 | ResNet-50   |      |     |
 | ResNet-101   |   75.6   |   92.6  |
-| ResNet-152 | | |
+| ResNet-152 | 76.1 | 92.8 |
