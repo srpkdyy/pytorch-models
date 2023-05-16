@@ -1,14 +1,15 @@
 import os
 import dataclasses
 import itertools
+from functools import partial
 
 import torch
 import accelerate
 import torch.nn as nn
 import torch.optim as optim
 from accelerate import Accelerator
-from timm import scheduler
 from tqdm import tqdm
+from timm.scheduler import CosineLRScheduler
 from torch.utils.data import DataLoader
 from torchvision import transforms as TF
 from torchvision.datasets import ImageNet
@@ -44,7 +45,7 @@ class Config:
     warmup_epoch: int = 20
 
     # Model
-    arch_type: str = '18' # [T, S, B, L, XL]
+    arch_type: str = 'T' # [T, S, B, L, XL]
     n_classes: int = 1000
 
     # Training
@@ -56,22 +57,17 @@ cfg = Config()
 
 def main():
     ar = Accelerator(log_with='wandb', split_batches=True)
-    ar.init_trackers('ResNet', config=cfg)
+    ar.init_trackers('ConvNeXt', config=cfg)
 
     device = ar.device
-    ndevice = ar.num_processes
 
-    #normalize = TF.Normalize([0.485, 0.456, 0.406], [0.229, 0.224, 0.225])
-    normalize = TF.Normalize([0.5], [0.5])
-
+    normalize = TF.Normalize([0.485, 0.456, 0.406], [0.229, 0.224, 0.225])
     train_ds = ImageNet(
         cfg.root,
         'train',
         transform=TF.Compose([
             TF.Resize(cfg.resize),
             TF.RandomCrop(cfg.crop_size),
-            TF.RandAugment(9, 0.5),
-            TF.RandomErasing(scale=(0.01, 0.25)),
             TF.ToTensor(),
             normalize,
         ])
@@ -80,8 +76,8 @@ def main():
         cfg.root,
         'val',
         transform=TF.Compose([
-            TF.Resize(cfg.crop_size),
-            TF.CenterCrop(cfg.crop_size),
+            TF.Resize(cfg.test_size),
+            TF.CenterCrop(cfg.test_size),
             TF.ToTensor(),
             normalize,
         ])
@@ -103,7 +99,7 @@ def main():
         cfg.lr,
         weight_decay=cfg.weight_decay
     )
-    scheduler = scheduler.CosineLRScheduler(
+    scheduler = CosineLRScheduler(
         optimizer,
         cfg.epoch,
         warmup_t=cfg.warmup_epoch,
@@ -114,17 +110,17 @@ def main():
         train_dl, valid_dl, model, optimizer, scheduler
     )
 
-    train_pbar = tqdm(train_dl, desc='Train', disable=not ar.is_local_main_process)
-    valid_pbar = tqdm(valid_dl, desc='Valid', disable=not ar.is_local_main_process)
+    train_pbar = partial(tqdm, train_dl, desc='Train', disable=not ar.is_local_main_process)
+    valid_pbar = partial(tqdm, valid_dl, desc='Valid', disable=not ar.is_local_main_process)
 
     top1_acc_metric = Accuracy('multiclass', num_classes=cfg.n_classes).to(device)
     top5_acc_metric = Accuracy('multiclass', num_classes=cfg.n_classes, top_k=5).to(device)
 
-    for epoch in cfg.epoch:
+    for epoch in range(cfg.epoch):
 
         model.train()
 
-        for images, labels in train_pbar:
+        for images, labels in train_pbar():
 
             outputs = model(images)
             loss = criterion(outputs, labels)
@@ -133,19 +129,18 @@ def main():
             ar.backward(loss)
             optimizer.step()
 
-            train_loss = ar.gather(loss).mean().item()
-
-            log = {
-                'Train Loss': train_loss,
-                'Learning rate': optimizer.param_groups[0]['lr']
-            }
-            ar.log(log, step=step)
+        train_loss = ar.gather(loss).mean().item()
+        log = {
+            'Train Loss': train_loss,
+            'Learning rate': optimizer.param_groups[0]['lr']
+        }
+        ar.log(log, step=epoch)
 
         model.eval()
         top1_acc_metric.reset()
         top5_acc_metric.reset()
 
-        for images, labels in valid_pbar:
+        for images, labels in valid_pbar():
             with torch.no_grad():
                 outputs = model(images)
             preds = outputs.argmax(dim=1)
@@ -156,14 +151,13 @@ def main():
         top1_acc = top1_acc_metric.compute().item()
         top5_acc = top5_acc_metric.compute().item()
 
-        scheduler.step()
-
         log = {
             'Top1 Acc': top1_acc,
             'Top5 Acc': top5_acc,
         }
-        ar.log(log, step=step)
-        ar.print(log)
+        ar.log(log, step=epoch)
+
+        scheduler.step(epoch)
 
     ar.end_training()
 
