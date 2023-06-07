@@ -27,11 +27,13 @@ class PositionalEncoding(nn.Module):
 
 
 class ScaledDotProductAttention(nn.Module):
-    def __init__(self, dim):
+    def __init__(self, dim, p_drop):
         super().__init__()
 
         self.scale = dim ** 0.5
         self.fill_val = torch.tensor(-float('inf'))
+
+        self.dropout = nn.Dropout(p_drop)
 
     def forward(self, q, k, v, mask=None):
         qk = torch.einsum('...id,...jd->...ij', q, k)
@@ -41,12 +43,14 @@ class ScaledDotProductAttention(nn.Module):
             scaled_qk.masked_fill_(mask, self.fill_val)
 
         attn = F.softmax(scaled_qk, dim=-1)
+        attn = self.dropout(attn)
+
         out = einsum('...ij,...jd->...id', attn, v)
         return out
 
 
 class MultiHeadAttention(nn.Module):
-    def __init__(self, dim=512, n_heads=8):
+    def __init__(self, dim, n_heads, p_drop):
         super().__init__()
 
         self.n_heads = n_heads
@@ -58,8 +62,10 @@ class MultiHeadAttention(nn.Module):
         self.k_proj = nn.Linear(dim, proj_dim, bias=False)
         self.v_proj = nn.Linear(dim, proj_dim, bias=False)
 
-        self.attention = ScaledDotProductAttention(kv_dim)
+        self.attention = ScaledDotProductAttention(kv_dim, p_drop)
+
         self.out_proj = nn.Linear(proj_dim, dim, bias=False)
+        self.dropout = nn.Dropout(p_drop)
 
     def forward(self, q, kv=None, mask=None):
         kv = kv if kv is not None else q
@@ -71,11 +77,12 @@ class MultiHeadAttention(nn.Module):
         attn = rearrange(attn, 'b h l d -> b l (h d)')
 
         out = self.out_proj(attn)
+        out = self.dropout(out)
         return out
 
 
 class FeedForwardNet(nn.Module):
-    def __init__(self, dim):
+    def __init__(self, dim, p_drop):
         super().__init__()
 
         ff_dim = dim * 4
@@ -83,7 +90,8 @@ class FeedForwardNet(nn.Module):
         self.net = nn.Sequential(
             nn.Linear(dim, ff_dim),
             nn.ReLU(),
-            nn.Linear(ff_dim, dim)
+            nn.Linear(ff_dim, dim),
+            nn.Dropout(p_drop)
         )
 
     def forward(self, x):
@@ -91,12 +99,12 @@ class FeedForwardNet(nn.Module):
 
 
 class EncoderLayer(nn.Module):
-    def __init__(self, dim, n_heads):
+    def __init__(self, dim, n_heads, p_drop):
         super().__init__()
 
-        self.mha = MultiHeadAttention(dim, n_heads)
+        self.mha = MultiHeadAttention(dim, n_heads, p_drop)
         self.norm1 = nn.LayerNorm(dim)
-        self.ffn = FeedForwardNet(dim)
+        self.ffn = FeedForwardNet(dim, p_drop)
         self.norm2 = nn.LayerNorm(dim)
 
     def forward(self, x):
@@ -106,14 +114,14 @@ class EncoderLayer(nn.Module):
 
 
 class DecoderLayer(nn.Module):
-    def __init__(self, dim, n_heads):
+    def __init__(self, dim, n_heads, p_drop):
         super().__init__()
 
-        self.mask_mha = MultiHeadAttention(dim, n_heads)
+        self.mask_mha = MultiHeadAttention(dim, n_heads, p_drop)
         self.norm1 = nn.LayerNorm(dim)
-        self.mha = MultiHeadAttention(dim, n_heads)
+        self.mha = MultiHeadAttention(dim, n_heads, p_drop)
         self.norm2 = nn.LayerNorm(dim)
-        self.ffn = FeedForwardNet(dim)
+        self.ffn = FeedForwardNet(dim, p_drop)
         self.norm3 = nn.LayerNorm(dim)
 
     def forward(self, x, kv=None):
@@ -136,50 +144,39 @@ class Transformer(nn.Module):
                  n_heads=8,
                  kv_dim=64,
                  p_drop=0.1,
-                 n_classes=1,
                  ):
         super().__init__()
 
-        self.enc_emb = nn.Embedding(3000, dim)
-        self.dec_emb = nn.Embedding(3000, dim)
         self.pos_emb = PositionalEncoding(dim)
 
+        self.enc_drop = nn.Dropout(p_drop)
+        self.dec_drop = nn.Dropout(p_drop)
+
         self.encoder = nn.ModuleList([
-            EncoderLayer(dim, n_heads) for _ in range(n_layers)
+            EncoderLayer(dim, n_heads, p_drop) for _ in range(n_layers)
         ])
         self.decoder = nn.ModuleList([
-            DecoderLayer(dim, n_heads) for _ in range(n_layers)
+            DecoderLayer(dim, n_heads, p_drop) for _ in range(n_layers)
         ])
-        self.fc = nn.Sequential(
-            nn.Linear(dim, n_classes),
-            nn.Flatten()
-        )
 
-    def forward(self, enc_inputs, dec_inputs):
-        x = self.enc_emb(enc_inputs)
-        x = x + self.pos_emb(x.shape[1], device=x.device)
+    def forward(self, enc_x, dec_x):
+        enc_x = enc_x + self.pos_emb(enc_x.shape[1], device=enc_x.device)
+        enc_x = self.enc_drop(enc_x)
 
         for layer in self.encoder:
-            x = layer(x)
+            enc_x = layer(enc_x)
 
-        enc_outputs = x
-
-        y = self.dec_emb(dec_inputs)
-        y = y + self.pos_emb(y.shape[1], device=y.device)
+        dec_x = dec_x + self.pos_emb(dec_x.shape[1], device=dec_x.device)
+        dec_x = self.dec_drop(dec_x)
 
         for layer in self.decoder:
-            y = layer(y, kv=enc_outputs)
+            dec_x = layer(dec_x, kv=dec_x)
 
-        dec_outputs = y
-
-        out = self.fc(dec_outputs)
-        return out
+        return dec_x
 
 
 if __name__ == '__main__':
-    inputs = torch.randint(1000, (4, 32))
     model = Transformer()
-
-    out = model(inputs, inputs)
+    out = model(torch.rand(2, 3, 512), torch.rand(2, 3, 512))
     print(out.shape)
 
