@@ -109,8 +109,6 @@ class DecoderLayer(nn.Module):
     def __init__(self, dim, n_heads):
         super().__init__()
 
-        self.dummy = torch.empty(1) # for get device
-
         self.mask_mha = MultiHeadAttention(dim, n_heads)
         self.norm1 = nn.LayerNorm(dim)
         self.mha = MultiHeadAttention(dim, n_heads)
@@ -121,7 +119,7 @@ class DecoderLayer(nn.Module):
     def forward(self, x, kv=None):
         B, L, D = x.shape
 
-        mask = torch.ones(L, L, dtype=torch.bool, device=self.dummy.device)
+        mask = torch.ones(L, L, dtype=torch.bool, device=x.device)
         mask = mask.tril().logical_not()
 
         x = self.norm1(x + self.mask_mha(x, mask=mask))
