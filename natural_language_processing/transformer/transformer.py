@@ -21,13 +21,9 @@ class PositionalEncoding(nn.Module):
         pe = torch.cat((x.sin(), x.cos()), dim=-1)
         self.pe = rearrange(pe, 'L d sc -> L (d sc)')
 
-    def forward(self, x, dim=1):
-
-        idx = [None] * dim 
-        idx.extend([slice(x.shape[dim]), slice(None)])
-        idx.extend([None] * (x.ndim - dim - 2))
-
-        return self.pe[idx]
+    def forward(self, n, *, device=torch.device('cpu')):
+        enc = self.pe[:n]
+        return enc.to(device)
 
 
 class ScaledDotProductAttention(nn.Module):
@@ -156,11 +152,14 @@ class Transformer(nn.Module):
         self.decoder = nn.ModuleList([
             DecoderLayer(dim, n_heads) for _ in range(n_layers)
         ])
-        self.fc = nn.Linear(dim, n_classes)
+        self.fc = nn.Sequential(
+            nn.Linear(dim, n_classes),
+            nn.Flatten()
+        )
 
     def forward(self, enc_inputs, dec_inputs):
         x = self.enc_emb(enc_inputs)
-        x = x + self.pos_emb(x, dim=1)
+        x = x + self.pos_emb(x.shape[1], device=x.device)
 
         for layer in self.encoder:
             x = layer(x)
@@ -168,7 +167,7 @@ class Transformer(nn.Module):
         enc_outputs = x
 
         y = self.dec_emb(dec_inputs)
-        y = y + self.pos_emb(y, dim=1)
+        y = y + self.pos_emb(y.shape[1], device=y.device)
 
         for layer in self.decoder:
             y = layer(y, kv=enc_outputs)
@@ -180,7 +179,7 @@ class Transformer(nn.Module):
 
 
 if __name__ == '__main__':
-    inputs = torch.randint(1000, (1, 32))
+    inputs = torch.randint(1000, (4, 32))
     model = Transformer()
 
     out = model(inputs, inputs)
