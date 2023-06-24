@@ -49,7 +49,7 @@ class Config:
 
     # Logging
     logdir: str = 'results'
-    log_interval_steps: int = 500
+    log_interval_steps: int = 10000
     nrow: int = 4
 
 
@@ -84,18 +84,20 @@ def main():
 
     model = VQVAE(k_cat=cfg.K, dim=cfg.dim, beta=cfg.beta)
 
-    optimizer = optim.Adam(model.parameters(), cfg.lr)
+    optimizer = optim.Adam(model.parameters(), cfg.lr * n_devices)
 
     train_dl, valid_dl, model, optimizer = ar.prepare(
         train_dl, valid_dl, model, optimizer
     )
 
+    train_dl = cycle(train_dl)
+
     steps = cfg.steps // n_devices
-    for step in tqdm(range(steps), ar.is_local_main_process):
+    for step in tqdm(range(steps), disable=not ar.is_local_main_process):
 
         model.train()
 
-        imgs, _ = next(dl)
+        imgs, _ = next(train_dl)
 
         outs = model(imgs)
 
@@ -105,26 +107,26 @@ def main():
         ar.backward(loss)
         optimizer.step()
 
-        if step % cfg.log_interval_steps == 0:
+        if step % (cfg.log_interval_steps // n_devices) == 0:
             train_loss = ar.gather(loss).mean().item()
 
             model.eval()
 
-            with torch.inference_mode():
-                imgs = next(iter(valid_dl))
+            with torch.no_grad():
+                imgs, _ = next(iter(valid_dl))
 
                 outs = model(imgs)
 
-                loss = F.mse_loss(img, outs['recon']) + outs['vq_loss']
+                loss = F.mse_loss(imgs, outs['recon']) + outs['vq_loss']
 
                 recon = ar.gather_for_metrics(outs['recon'])
                 valid_loss = ar.gather_for_metrics(loss).mean().item()
 
             if ar.is_local_main_process:
-                recon = recon[:cfg.n_save_imgs]
+                recon = recon[:cfg.nrow ** 2]
                 save_image(
                     recon, f'{cfg.logdir}/recon_{step}.png',
-                    nrow=nrow, normalize=True, value_range=(-1, 1)
+                    nrow=cfg.nrow, normalize=True, value_range=(-1, 1)
                 )
 
             log = {

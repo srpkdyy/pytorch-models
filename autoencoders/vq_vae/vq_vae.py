@@ -1,6 +1,13 @@
+import torch
 import torch.nn as nn
 import torch.nn.functional as F
 from einops import rearrange
+
+
+def init_weights(m):
+    if isinstance(m, (nn.Conv2d, nn.ConvTranspose2d)):
+        nn.init.normal_(m.weight, std=0.01)
+        nn.init.constant_(m.bias, 0)
 
 
 class VQVAE(nn.Module):
@@ -9,6 +16,7 @@ class VQVAE(nn.Module):
 
         self.encoder = nn.Sequential(
             Downsampler(channels, dim),
+            nn.ReLU(),
             Downsampler(dim, dim),
             ResBlock(dim),
             ResBlock(dim)
@@ -20,8 +28,11 @@ class VQVAE(nn.Module):
             ResBlock(dim),
             ResBlock(dim),
             Upsampler(dim, dim),
+            nn.ReLU(),
             Upsampler(dim, channels)
         )
+
+        self.apply(init_weights)
 
     def forward(self, x):
         x = self.encoder(x)
@@ -73,17 +84,23 @@ class Quantizer(nn.Module):
         self.emb = nn.Embedding(k_cat, dim)
         self.beta = beta
 
+        nn.init.uniform_(self.emb.weight, -1/k_cat, 1/k_cat)
+
     def forward(self, x):
         b, c, h, w = x.shape
 
-        ze = rearrange(x, 'b c h w -> (b h w) 1 c')
-        ej = rearrange(self.emb.weight, 'k c -> 1 k c')
+        ze = rearrange(x, 'b c h w -> (b h w) c').contiguous()
+        ej = self.emb.weight
 
-        l2 = (ze - ej).pow(2).sum(-1).sqrt()
+        with torch.no_grad():
+            l2 = ze.pow(2).sum(-1, keepdims=True) + \
+                 ej.pow(2).sum(-1) - 2 * \
+                 torch.einsum('bc,kc->bk', ze, ej)
+            
         nearest_ids = l2.argmin(dim=-1)
 
         zq = self.emb(nearest_ids)
-        zq = rearrange(zq, '(b h w) c -> b c h w', b=b, h=h)
+        zq = rearrange(zq, '(b h w) c -> b c h w', b=b, h=h).contiguous()
 
         vq_loss = F.mse_loss(x.detach(), zq) + self.beta * F.mse_loss(x, zq.detach())
 
