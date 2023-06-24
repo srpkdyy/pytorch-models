@@ -1,5 +1,5 @@
 # VQ-VAE
-<img src="./assets/model.png" width="500px"></img>
+![model](assets/model.png)
 ## Overview
 This is an unofficial PyTorch implementation of the following paper:
 
